@@ -1,16 +1,20 @@
 # Prefect Lab: Currency Exchange Rate Pipeline
 
-This project implements a data pipeline using Prefect to process currency exchange rate data from the European Central Bank (ECB).
+This project implements a data pipeline using Prefect to process currency exchange rate data from the European Central
+Bank (ECB).
 
 ## Overview
 
 The pipeline consists of the following steps:
 
-1. **Download Data**: Downloads daily currency exchange rate data for EUR/USD, EUR/SEK, EUR/NOK, and EUR/DKK from the ECB API.
+1. **Download Data**: Downloads daily currency exchange rate data for EUR/USD, EUR/SEK, EUR/NOK, and EUR/DKK from the
+   ECB API.
 2. **Collect Currency Pairs**: Extracts currency pairs from the downloaded data and saves them to `pairs.csv`.
 3. **Collect Dates**: Extracts dates from the downloaded data and saves them to `dates.csv`.
-4. **Compute Stats**: Calculates monthly statistics (high, low, average) for each currency pair and saves them to `<PAIR>_monthly_stats.csv` files.
-5. **Identify Missing Data**: Identifies months with missing data for each currency pair and saves them to `<PAIR>_missing_data.csv` files.
+4. **Compute Stats**: Calculates monthly statistics (high, low, average) for each currency pair and saves them to
+   `<PAIR>_monthly_stats.csv` files.
+5. **Identify Missing Data**: Identifies months with missing data for each currency pair and saves them to
+   `<PAIR>_missing_data.csv` files.
 6. **Aggregate Missing Data**: Combines all missing data into a single `missing_data.csv` file.
 
 ## Project Structure
@@ -92,46 +96,61 @@ The pipeline produces the following output files in the `data` directory:
 
 ## Original Specification
 
-We will use Prefect to build a data ingress pipeline, 
+We will use Prefect to build a data ingress pipeline,
 a directed acyclic graph. All data is stored in CSV files in the data folder.
 
 The task is to download and process currency exchange rates from the ECB.
 See the API documentation here: <https://data.ecb.europa.eu/help/api/overview>
 
 ### Download Data
+
 First job is to download the daily data each of the pairs EUR/USD, EUR/SEK, EUR/NOK, EUR/SEK.
-Save these as CSV named "ECB_EUR_USD.csv" etc. 
-The source data is available at URLs like this one <https://data-api.ecb.europa.eu/service/data/EXR/D.USD.EUR.SP00.A?format=csvdata>
+Save these as CSV named "ECB_EUR_USD.csv" etc.
+The source data is available at URLs like this
+one <https://data-api.ecb.europa.eu/service/data/EXR/D.USD.EUR.SP00.A?format=csvdata>
 Do it with fan-out if possible.
 
-Each of these files are read and parsed and the records are to be fed to 
-a number of jobs. Each job produces an output as a file. 
-The job is resumable meaning it only runs if its output does not exist yet 
-or if its inputs were updated. 
+Each of these files are read and parsed and the records are to be fed to
+a number of jobs. Each job produces an output as a file.
+The job is resumable meaning it only runs if its output does not exist yet
+or if its inputs were updated.
+
+### Clean up Downloaded Data
+
+The next job processes each of the "ECB_" files downloaded above.
+For each of the ECB files create a new CSV with only the columns CURRENCY, CURRENCY_DENOM, TIME_PERIOD, OBS_VALUE
+and write then as CURRENCY, CURRENCY_DENOM, DATE, RATE.
+E.g. for "ECB_EUR_USD.csv" files etc, output a "EUR_USD.csv" file.
+Create a job for each of the ECB data files above.
 
 ### Collect Currency Pairs
+
 The next job simply collects the currency pairs mentioned in the "ECB_" files downloaded above.
 e.g. if we have a price for EUR/USD on some day it will collect EUR/USD. Write this to "pairs.csv".
-Create a job for each of the ECB data files above.
+Create a job for each of the cleaned data files above.
 
 ### Collect Dates
+
 The next job collects the dates mentioned. Dates only, no timezone.
 Dates are treated like a set. It saves these in the file "dates.csv".
-Create a job for each of the ECB data files above.
+Create a job for each of the cleaned data files above.
 
 ### Compute Stats
+
 The fourth job computes the high, low and average price for each pair
 for each month, e.g. EUR/USD is saved to "EUR_USD_monthly_stats.csv" (high and low are maximum and minimum).
-Create a job for each of the ECB data files above.
+Create a job for each of the cleaned data files above.
 
 ### Identify Missing Data
+
 The fifth job reads the "pairs.csv" and "dates.csv" and calculates the calendar months from
-the minimum date to the maximum date, both months inclusive. 
-Then for each currency pair i pairs.csv it spawns a task to read the ..._monthly_stats.csv file 
+the minimum date to the maximum date, both months inclusive.
+Then for each currency pair i pairs.csv it spawns a task to read the ..._monthly_stats.csv file
 for that pair to verify that all the months just calculated are present. If any months are missing
 collect these and the name of the pair and add them to a file for that pair, e.g. "EUR_USD_missing_data.csv"
 
 ### Aggregate the Missing Data into One File
-Final job, wait for the missing data files for the pairs to be generated, then 
+
+Final job, wait for the missing data files for the pairs to be generated, then
 create an aggregate file, "missing_data.csv" with all the months and pairs that from the _missing_data.csv files
 generated in the step above and all the pairs in the "pairs.csv" file.
