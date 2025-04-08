@@ -38,7 +38,7 @@ prefect-lab/
 
 2. Install the package and its dependencies:
    ```
-   pip install -e .
+   uv sync
    ```
 
 ## Running the Pipeline
