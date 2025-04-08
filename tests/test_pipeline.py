@@ -8,6 +8,7 @@ from pathlib import Path
 from src.pipeline import (
     currency_exchange_rate_pipeline,
     download_currency_data_flow,
+    clean_up_currency_data_flow,
     CURRENCY_PAIRS,
     DATA_DIR,
 )
@@ -54,17 +55,34 @@ class TestPipeline(unittest.TestCase):
             self.assertTrue(file_path.exists())
             self.assertGreater(file_path.stat().st_size, 0)
 
-        # 2. Check pairs file
+        # 2. Check cleaned files
+        cleaned_files = result["cleaned_files"]
+        self.assertEqual(len(cleaned_files), len(CURRENCY_PAIRS))
+        for file_path in cleaned_files:
+            self.assertTrue(file_path.exists())
+            self.assertGreater(file_path.stat().st_size, 0)
+
+            # Check that the file has the correct name format
+            file_name = file_path.name
+            self.assertFalse(file_name.startswith("ECB_"))  # Should not have ECB_ prefix
+            self.assertTrue(file_name.startswith("EUR_"))   # Should start with EUR_
+            self.assertTrue(file_name.endswith(".csv"))     # Should end with .csv
+
+            # Extract the currency from the file name
+            currency = file_name.replace("EUR_", "").replace(".csv", "")
+            self.assertIn(currency, CURRENCY_PAIRS)
+
+        # 3. Check pairs file
         pairs_file = result["pairs_file"]
         self.assertTrue(pairs_file.exists())
         self.assertGreater(pairs_file.stat().st_size, 0)
 
-        # 3. Check dates file
+        # 4. Check dates file
         dates_file = result["dates_file"]
         self.assertTrue(dates_file.exists())
         self.assertGreater(dates_file.stat().st_size, 0)
 
-        # 4. Check monthly stats files
+        # 5. Check monthly stats files
         monthly_stats_files = result["monthly_stats_files"]
         self.assertGreaterEqual(len(monthly_stats_files), 1)  # At least one file should be produced
         for file_path in monthly_stats_files:
@@ -75,7 +93,7 @@ class TestPipeline(unittest.TestCase):
             file_name = file_path.name
             self.assertTrue("_monthly_stats.csv" in file_name)
 
-        # 5. Check missing data files
+        # 6. Check missing data files
         missing_data_files = result["missing_data_files"]
         self.assertGreaterEqual(len(missing_data_files), 1)  # At least one file should be produced
         for file_path in missing_data_files:
@@ -85,12 +103,13 @@ class TestPipeline(unittest.TestCase):
             file_name = file_path.name
             self.assertTrue("_missing_data.csv" in file_name)
 
-        # 6. Check aggregate missing data file
+        # 7. Check aggregate missing data file
         aggregate_file = result["aggregate_file"]
         self.assertTrue(aggregate_file.exists())
 
         print("\nAll pipeline output files were produced successfully:")
         print(f"- Downloaded files: {[f.name for f in downloaded_files]}")
+        print(f"- Cleaned files: {[f.name for f in cleaned_files]}")
         print(f"- Pairs file: {pairs_file.name}")
         print(f"- Dates file: {dates_file.name}")
         print(f"- Monthly stats files: {[f.name for f in monthly_stats_files]}")

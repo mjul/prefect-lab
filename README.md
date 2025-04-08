@@ -125,7 +125,7 @@ Create a job for each of the ECB data files above.
 
 ### Collect Currency Pairs
 
-The next job simply collects the currency pairs mentioned in the "ECB_" files downloaded above.
+The next job simply collects the currency pairs mentioned in the cleaned data files above.
 e.g. if we have a price for EUR/USD on some day it will collect EUR/USD. Write this to "pairs.csv".
 Create a job for each of the cleaned data files above.
 

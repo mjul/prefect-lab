@@ -20,7 +20,7 @@ DATA_DIR = Path("data")
 CURRENCY_PAIRS = ["USD", "SEK", "NOK", "DKK"]  # Base currency is EUR
 
 
-@task(retries=3, retry_delay_seconds=5, cache_key_fn=task_input_hash, cache_expiration=timedelta(hours=24))
+@task(retries=3, retry_delay_seconds=5)
 def download_currency_data(currency: str) -> Path:
     """
     Download currency exchange rate data from ECB for a specific currency pair.
@@ -63,22 +63,67 @@ def download_currency_data(currency: str) -> Path:
 
 
 @task
-def collect_currency_pairs(file_path: Path) -> Set[str]:
+def clean_up_currency_data(file_path: Path) -> Path:
     """
-    Extract currency pairs from a downloaded ECB CSV file.
+    Clean up downloaded ECB CSV file by extracting only the required columns.
 
     Args:
-        file_path: Path to the CSV file
+        file_path: Path to the ECB CSV file
 
     Returns:
-        Set of currency pairs (e.g., "EUR_USD")
+        Path to the cleaned CSV file
     """
     # Extract the currency from the file name
     file_name = file_path.name
     currency = file_name.replace("ECB_EUR_", "").replace(".csv", "")
 
-    # Create the currency pair (EUR is the base currency)
-    currency_pair = f"EUR_{currency}"
+    # Construct the output file path
+    output_file = DATA_DIR / f"EUR_{currency}.csv"
+
+    try:
+        # Read the CSV file using pandas
+        df = pd.read_csv(file_path)
+
+        # Extract only the required columns
+        if all(col in df.columns for col in ['CURRENCY', 'CURRENCY_DENOM', 'TIME_PERIOD', 'OBS_VALUE']):
+            cleaned_df = df[['CURRENCY', 'CURRENCY_DENOM', 'TIME_PERIOD', 'OBS_VALUE']]
+
+            # Rename columns
+            cleaned_df = cleaned_df.rename(columns={
+                'TIME_PERIOD': 'DATE',
+                'OBS_VALUE': 'RATE'
+            })
+
+            # Write to CSV
+            cleaned_df.to_csv(output_file, index=False)
+
+            print(f"Saved cleaned data for EUR/{currency} to {output_file}")
+        else:
+            print(f"Warning: Required columns not found in {file_path}")
+            return None
+    except Exception as e:
+        print(f"Error cleaning up data for {file_path}: {e}")
+        return None
+
+    return output_file
+
+
+@task
+def collect_currency_pairs(file_path: Path) -> Set[str]:
+    """
+    Extract currency pairs from a cleaned CSV file.
+
+    Args:
+        file_path: Path to the cleaned CSV file (EUR_*.csv)
+
+    Returns:
+        Set of currency pairs (e.g., "EUR_USD")
+    """
+    # Extract the currency pair from the file name
+    file_name = file_path.name
+
+    # The file name is in the format "EUR_USD.csv"
+    currency_pair = file_name.replace(".csv", "")
 
     return {currency_pair}
 
@@ -152,13 +197,34 @@ def download_currency_data_flow() -> List[Path]:
     return downloaded_files
 
 
+@flow(name="Clean Up Currency Data Flow")
+def clean_up_currency_data_flow(input_files: List[Path]) -> List[Path]:
+    """
+    Clean up downloaded ECB CSV files by extracting only the required columns.
+
+    Args:
+        input_files: List of paths to the downloaded ECB CSV files
+
+    Returns:
+        List of paths to the cleaned CSV files
+    """
+    # Clean up each file
+    cleaned_files = []
+    for file_path in input_files:
+        cleaned_file = clean_up_currency_data(file_path)
+        if cleaned_file:
+            cleaned_files.append(cleaned_file)
+
+    return cleaned_files
+
+
 @task
 def collect_dates(file_path: Path) -> Set[str]:
     """
-    Extract dates from a downloaded ECB CSV file.
+    Extract dates from a cleaned CSV file.
 
     Args:
-        file_path: Path to the CSV file
+        file_path: Path to the cleaned CSV file
 
     Returns:
         Set of dates (YYYY-MM-DD format)
@@ -167,20 +233,15 @@ def collect_dates(file_path: Path) -> Set[str]:
 
     # Read the CSV file using pandas
     try:
-        df = pd.read_csv(file_path, skiprows=5)  # Skip ECB CSV header rows
+        # Read the cleaned CSV file
+        df = pd.read_csv(file_path)
 
-        # Find the date column (usually named 'TIME_PERIOD')
-        date_column = None
-        for col in df.columns:
-            if 'TIME' in col or 'DATE' in col or 'PERIOD' in col:
-                date_column = col
-                break
-
-        if date_column:
+        # In cleaned files, the date column is named 'DATE'
+        if 'DATE' in df.columns:
             # Extract unique dates
-            dates.update(df[date_column].unique())
+            dates.update(df['DATE'].unique())
         else:
-            print(f"Warning: No date column found in {file_path}")
+            print(f"Warning: No DATE column found in {file_path}")
     except Exception as e:
         print(f"Error reading {file_path}: {e}")
 
@@ -245,34 +306,29 @@ def compute_monthly_stats(file_path: Path) -> Path:
     Compute monthly statistics (high, low, average) for a currency pair.
 
     Args:
-        file_path: Path to the CSV file
+        file_path: Path to the cleaned CSV file
 
     Returns:
         Path to the saved monthly stats CSV file
     """
-    # Extract the currency from the file name
+    # Extract the currency pair from the file name
     file_name = file_path.name
-    currency = file_name.replace("ECB_EUR_", "").replace(".csv", "")
-    currency_pair = f"EUR_{currency}"
+
+    # The file name is in the format "EUR_USD.csv"
+    currency_pair = file_name.replace(".csv", "")
 
     # Construct the output file path
     output_file = DATA_DIR / f"{currency_pair}_monthly_stats.csv"
 
     try:
-        # Read the CSV file using pandas
-        df = pd.read_csv(file_path, skiprows=5)  # Skip ECB CSV header rows
+        # Read the cleaned CSV file
+        df = pd.read_csv(file_path)
 
-        # Find the date and value columns
-        date_column = None
-        value_column = None
+        # In cleaned files, column names are standardized
+        date_column = 'DATE'
+        value_column = 'RATE'
 
-        for col in df.columns:
-            if 'TIME' in col or 'DATE' in col or 'PERIOD' in col:
-                date_column = col
-            elif 'OBS' in col or 'VALUE' in col:
-                value_column = col
-
-        if date_column and value_column:
+        if date_column in df.columns and value_column in df.columns:
             # Convert date column to datetime
             df[date_column] = pd.to_datetime(df[date_column])
 
@@ -297,7 +353,7 @@ def compute_monthly_stats(file_path: Path) -> Path:
 
             print(f"Saved monthly stats for {currency_pair} to {output_file}")
         else:
-            print(f"Warning: Could not find date or value column in {file_path}")
+            print(f"Warning: Required columns not found in {file_path}")
             return None
     except Exception as e:
         print(f"Error computing monthly stats for {file_path}: {e}")
@@ -526,23 +582,27 @@ def currency_exchange_rate_pipeline():
     # Step 1: Download currency data
     downloaded_files = download_currency_data_flow()
 
-    # Step 2: Collect currency pairs
-    pairs_file = collect_currency_pairs_flow(downloaded_files)
+    # Step 2: Clean up downloaded data
+    cleaned_files = clean_up_currency_data_flow(downloaded_files)
 
-    # Step 3: Collect dates
-    dates_file = collect_dates_flow(downloaded_files)
+    # Step 3: Collect currency pairs
+    pairs_file = collect_currency_pairs_flow(cleaned_files)
 
-    # Step 4: Compute monthly stats
-    monthly_stats_files = compute_monthly_stats_flow(downloaded_files)
+    # Step 4: Collect dates
+    dates_file = collect_dates_flow(cleaned_files)
 
-    # Step 5: Identify missing data
+    # Step 5: Compute monthly stats
+    monthly_stats_files = compute_monthly_stats_flow(cleaned_files)
+
+    # Step 6: Identify missing data
     missing_data_files = identify_missing_data_flow(pairs_file, dates_file)
 
-    # Step 6: Aggregate missing data
+    # Step 7: Aggregate missing data
     aggregate_file = aggregate_missing_data_flow(missing_data_files, pairs_file)
 
     return {
         "downloaded_files": downloaded_files,
+        "cleaned_files": cleaned_files,
         "pairs_file": pairs_file,
         "dates_file": dates_file,
         "monthly_stats_files": monthly_stats_files,
